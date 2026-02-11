@@ -1,0 +1,16 @@
+# Ignore build directory
+build/
+
+# Ignore compiled files (optional but recommended)
+*.o
+*.elf
+*.bin
+*.hex
+*.map
+
+# Ignore dependency files
+*.d
+
+# Ignore temporary files
+*.swp
+*~
