@@ -1,144 +1,78 @@
 #include "UART.h"
+#include <stdio.h>
+
+// Static ring buffer for background reception
+static volatile char rx_buffer[UART_RX_BUF_SIZE];
+static volatile uint16_t rx_head = 0;
+static volatile uint16_t rx_tail = 0;
 
 void usart1_begin(uint32_t baudrate) {
-    // Enable GPIOA and USART1 clocks
+    // 1. Enable Clocks: GPIOA (for PA9/PA10) and USART1
     RCC->APB2ENR |= RCC_GPIOAEN | RCC_USART1EN;
 
-    // Configure PA9 (TX) as Alternate Function Push-Pull 50MHz
-    GPIOA->CRH &= ~(0xF << 4);  // Clear PA9 configuration bits
-    GPIOA->CRH |= GPIOCR_AF_PP_50MHZ << 4;
+    // 2. Configure PA9 (TX) as Alternate Function Push-Pull (50MHz)
+    GPIOA->CRH &= ~(0xF << 4); 
+    GPIOA->CRH |= (GPIOCR_AF_PP_50MHZ << 4);
 
-    // Configure PA10 (RX) as Floating Input
-    GPIOA->CRH &= ~(0xF << 8);  // Clear PA10 configuration bits
-    GPIOA->CRH |= GPIOCR_INPUT_FLOATING << 8;
+    // 3. Configure PA10 (RX) as Input Floating
+    GPIOA->CRH &= ~(0xF << 8);
+    GPIOA->CRH |= (GPIOCR_INPUT_FLOATING << 8);
 
-    // Calculate and set baud rate (APB2 = 72MHz)
-    // BRR = PCLK / baudrate
-    if (baudrate == 9600) {
-        USART1->BRR = 7500;  // 72MHz / 9600 = 7500
-    }
-    else if (baudrate == 115200) {
-        USART1->BRR = 625;   // 72MHz / 115200 = 625 (0x271)
-    }
-    else {
-        // Generic calculation for other baud rates
-        USART1->BRR = 72000000 / baudrate;
-    }
+    // 4. Set Baud Rate (Assuming PCLK2 = 72MHz)
+    // Formula: BRR = 72,000,000 / baudrate
+    USART1->BRR = 72000000 / baudrate;
 
-    // Enable USART1
-    USART1->CR1 |= (1 << 13);  // UE: USART Enable
+    // 5. Enable UART, Transmitter, Receiver, and RX-NotEmpty Interrupt
+    USART1->CR1 |= USART_CR1_UE | USART_CR1_TE | USART_CR1_RE | USART_CR1_RXNEIE;
 
-    // Wait for USART to be ready before enabling transmitter
-    // This prevents garbage on the TX line during initialization
-    while (!(USART1->SR & (1 << 7)));  // Wait for TXE (Transmit Data Register Empty)
-
-    // Enable Transmitter and Receiver
-    USART1->CR1 |= (1 << 3);   // TE: Transmitter Enable
-    USART1->CR1 |= (1 << 2);   // RE: Receiver Enable
-
-    // Clear any pending flags by reading SR and DR
-    (void)USART1->SR;
-    (void)USART1->DR;
-
-    // Wait for Transmission Complete to ensure line is stable
-    while (!(USART1->SR & (1 << 6)));  // Wait for TC (Transmission Complete)
+    // 6. Enable USART1 Interrupt in NVIC (Vector 37)
+    // Using the NVIC Set-Enable Register address directly
+    *(volatile uint32_t*)(0xE000E104) |= (1 << (37 - 32));
 }
 
 uint8_t usart1_available(void) {
-    // Check if data is available to read
-    // RXNE: Read Data Register Not Empty (bit 5)
-    return (USART1->SR & (1 << 5)) != 0;
+    return (rx_head != rx_tail);
 }
 
 char usart1_read(void) {
-    // Wait until data is available
-    while (!usart1_available());
-    
-    // Read and return the received data
-    return (char)(USART1->DR & 0xFF);
+    if (rx_head == rx_tail) return 0;
+    char c = rx_buffer[rx_tail];
+    rx_tail = (rx_tail + 1) % UART_RX_BUF_SIZE;
+    return c;
+}
+
+void usart1_flush(void) {
+    rx_head = rx_tail;
 }
 
 void usart1_write(char c) {
-    // Wait until TXE (Transmit Data Register Empty) is set
-    while (!(USART1->SR & (1 << 7)));
-    
-    // Write the character to the data register
+    // Wait until Transmit Data Register is empty
+    while (!(USART1->SR & USART_SR_TXE));
     USART1->DR = c;
 }
 
 void usart1_print(char *str) {
-    // Transmit each character in the string
-    while (*str) {
-        usart1_write(*str++);
-    }
+    while (*str) usart1_write(*str++);
 }
 
 void usart1_println(char *str) {
-    // Print string followed by carriage return and line feed
     usart1_print(str);
-    usart1_write('\r');
-    usart1_write('\n');
+    usart1_print("\r\n");
 }
 
-void usart1_print_int(int32_t num) {
-    char buffer[12];  // Enough for -2147483648 + null terminator
-    int i = 0;
-    int is_negative = 0;
+/**
+ * @brief ISR - Triggered automatically when a byte is received
+ */
+void USART1_IRQHandler(void) {
+    // Check if the RXNE (Receive Not Empty) flag is set
+    if (USART1->SR & USART_SR_RXNE) {
+        char data = (char)USART1->DR;
+        uint16_t next = (rx_head + 1) % UART_RX_BUF_SIZE;
 
-    // Handle negative numbers
-    if (num < 0) {
-        is_negative = 1;
-        num = -num;
+        // If buffer isn't full, store the byte
+        if (next != rx_tail) {
+            rx_buffer[rx_head] = data;
+            rx_head = next;
+        }
     }
-
-    // Handle zero case
-    if (num == 0) {
-        usart1_write('0');
-        return;
-    }
-
-    // Convert number to string (reversed)
-    while (num > 0) {
-        buffer[i++] = (num % 10) + '0';
-        num /= 10;
-    }
-
-    // Add negative sign if needed
-    if (is_negative) {
-        usart1_write('-');
-    }
-
-    // Print digits in correct order
-    while (i > 0) {
-        usart1_write(buffer[--i]);
-    }
-}
-
-void usart1_print_hex(uint32_t num) {
-    const char hex_chars[] = "0123456789ABCDEF";
-    char buffer[9];  // 8 hex digits + null terminator
-    int i;
-
-    usart1_print("0x");
-
-    // Convert to hex string
-    for (i = 7; i >= 0; i--) {
-        buffer[i] = hex_chars[num & 0xF];
-        num >>= 4;
-    }
-    buffer[8] = '\0';
-
-    // Skip leading zeros
-    i = 0;
-    while (i < 7 && buffer[i] == '0') {
-        i++;
-    }
-
-    // Print hex number
-    usart1_print(&buffer[i]);
-}
-
-void usart1_flush(void) {
-    // Wait for transmission to complete
-    while (!(USART1->SR & (1 << 6)));  // Wait for TC (Transmission Complete)
 }
