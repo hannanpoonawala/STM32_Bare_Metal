@@ -221,7 +221,7 @@ typedef enum {
     SYSTICK_COUNTFLAG = (1 << 16)
 } systick_csr_t;
 
-/* ===================================================== SYSTICK Defination ===================================================== */
+/* ===================================================== USART/UART Defination ===================================================== */
 
 /* USART Register structure */
 typedef struct {
@@ -290,6 +290,35 @@ typedef enum {
     USART_GTPR_GT     = (0xFF << 8)   // Guard time value
 } usart_gtpr_t;
 
+/* ===================================================== NVIC Defination ===================================================== */
+
+/* NVIC Register structure */
+typedef struct {
+    volatile uint32_t ISER[8];   // Interrupt Set-Enable Registers
+    volatile uint32_t ICER[8];   // Interrupt Clear-Enable Registers
+    volatile uint32_t ISPR[8];   // Interrupt Set-Pending Registers
+    volatile uint32_t ICPR[8];   // Interrupt Clear-Pending Registers
+    volatile uint32_t IABR[8];   // Interrupt Active Bit Registers
+    volatile uint32_t IP[240];   // Interrupt Priority Registers
+} nvic_t;
+
+/* NVIC Address */
+#define NVIC ((nvic_t *)0xE000E100)
+
+/* Interrupt Set-Enable Register (ISER) bit positions */
+
+typedef enum {
+    NVIC_ISER_EXTI0 = 6,   // EXTI Line0 interrupt
+    NVIC_ISER_EXTI1 = 7,   // EXTI Line1 interrupt
+    NVIC_ISER_EXTI2 = 8,   // EXTI Line2 interrupt
+    NVIC_ISER_EXTI3 = 9,   // EXTI Line3 interrupt
+    NVIC_ISER_EXTI4 = 10,  // EXTI Line4 interrupt
+    NVIC_ISER_EXTI5_9 = 23, // EXTI Line[9:5] interrupts
+    NVIC_ISER_EXTI10_15 = 40, // EXTI Line[15:10] interrupts
+    NVIC_ISER_USART1 = 37, // USART1 global interrupt
+    NVIC_ISER_USART2 = 38, // USART2 global interrupt
+    NVIC_ISER_USART3 = 39, // USART3 global interrupt
+} nvic_iser_t;
 
 
 #endif
